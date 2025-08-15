@@ -1,0 +1,6 @@
+# metrics:
+#   - name: count_of_actors
+#     definition: count(net_amount)'
+#     table: public.actors
+#     filters: "id != null"
+#     grain: day
