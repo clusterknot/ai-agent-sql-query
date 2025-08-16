@@ -126,6 +126,9 @@ def ingest_schema_cards(schemas: list[str] = 'public', per_table_samples:int=0) 
     # sources += [f"metric://{i}" for i,_ in enumerate(m_cards)]
     return add_texts(cards, sources)
 
+
+
+
 if __name__ == "__main__":
     print(ingest_schema_cards(["public"]))
     

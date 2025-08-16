@@ -2,12 +2,14 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 import json, re
 import sqlglot 
+from sqlalchemy import text, create_engine
 from sqlglot import parse_one
 import os, sys
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if ROOT not in sys.path:
     sys.path.append(ROOT)
 from app.llm.gemini import generate
+from app.config import DSN, ALLOWED_SCHEMAS
 from app.db.pg import run_sql, explain_sql
 from app.config import MAX_SQL_ROWS, MAX_EST_ROWS, MAX_EST_COST, ALLOWED_SCHEMAS
 
@@ -16,9 +18,104 @@ SCHEMA_QUAL = re.compile(r"\b([a-zA-Z_][\w]*)\.([a-zA-Z_][\w]*)\b")
 
 # --------- PLANNING & GENERATION ---------
 def load_metadata_json():
-    with open(os.path.join(ROOT, 'index', 'meta.json'), 'r') as f:
-        data = json.load(f)
-    return data
+    eng = create_engine(DSN, pool_pre_ping=True, future=True)
+    q = text("""
+      WITH
+  params AS (
+    SELECT 'public'::text AS schema_name
+  ),
+
+  cols AS (
+    SELECT
+      c.table_name,
+      c.column_name,
+      c.data_type,
+      c.ordinal_position
+    FROM information_schema.columns c
+    JOIN params p ON c.table_schema = p.schema_name
+    ORDER BY c.table_name, c.ordinal_position
+  ),
+
+  pks AS (
+    SELECT
+      kcu.table_name,
+      kcu.column_name
+    FROM information_schema.table_constraints tc
+    JOIN information_schema.key_column_usage kcu
+      ON tc.constraint_name = kcu.constraint_name
+     AND tc.table_schema   = kcu.table_schema
+     AND tc.table_name     = kcu.table_name
+    JOIN params p ON tc.table_schema = p.schema_name
+    WHERE tc.constraint_type = 'PRIMARY KEY'
+  ),
+
+  fks AS (
+    SELECT
+      tc.constraint_name,
+      kcu.table_name        AS child_table,
+      kcu.column_name       AS child_column,
+      ccu.table_name        AS parent_table,
+      ccu.column_name       AS parent_column
+    FROM information_schema.table_constraints tc
+    JOIN information_schema.key_column_usage kcu
+      ON tc.constraint_name = kcu.constraint_name
+     AND tc.table_schema   = kcu.table_schema
+    JOIN information_schema.constraint_column_usage ccu
+      ON ccu.constraint_name = tc.constraint_name
+     AND ccu.table_schema    = tc.table_schema
+    JOIN params p ON tc.table_schema = p.schema_name
+    WHERE tc.constraint_type = 'FOREIGN KEY'
+  )
+
+SELECT jsonb_pretty(
+  jsonb_agg(
+    jsonb_build_object(
+      'table', t.table_name,
+      'columns', t.columns
+    )
+    ORDER BY t.table_name
+  )
+) AS schema_json
+FROM (
+  SELECT
+    c.table_name,
+    jsonb_agg(
+      jsonb_build_object(
+        'name', c.column_name,
+        'data_type', c.data_type,
+        'is_primary_key', (pk.column_name IS NOT NULL),
+        'is_foreign_key',
+           COALESCE(jsonb_array_length(fk_refs.refs) > 0, FALSE),
+        'references', COALESCE(fk_refs.refs, '[]'::jsonb)
+      )
+      ORDER BY c.ordinal_position
+    ) AS columns
+  FROM cols c
+  LEFT JOIN pks pk
+    ON pk.table_name  = c.table_name
+   AND pk.column_name = c.column_name
+  LEFT JOIN LATERAL (
+    SELECT jsonb_agg(
+             jsonb_build_object(
+               'table', f.parent_table,
+               'column', f.parent_column,
+               'constraint', f.constraint_name
+             )
+             ORDER BY f.constraint_name
+           ) AS refs
+    FROM fks f
+    WHERE f.child_table  = c.table_name
+      AND f.child_column = c.column_name
+  ) fk_refs ON TRUE
+  GROUP BY c.table_name
+) t;
+    """)
+    with eng.connect() as c:
+        val = c.execute(q).scalar_one()
+        if isinstance(val, str):
+            val = json.loads(val)
+        return val  # Python dict/list
+        
 
 
 def plan_sql(nl_question: str, retrieved_context: List[str]) -> Dict[str, Any]:
@@ -27,7 +124,7 @@ def plan_sql(nl_question: str, retrieved_context: List[str]) -> Dict[str, Any]:
     # ctx = "\n---\n".join(retrieved_context)
     prompt = f"""
 You are a data analyst. From the Context, plan a SQL query in JSON. Only return JSON.
-JSON fields: tables, joins (list of objects {{left,right,type}}), select, filters, group_by, order_by, metric_refs.
+JSON fields: tables, joins (list of objects {{left,right,type}}), select, filters, group_by, order_by.
 Context:
 {ctx}
 
