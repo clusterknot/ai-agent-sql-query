@@ -45,11 +45,11 @@ def node_generate(state: QAState) -> QAState:
     state["sql"] = generate_sql(state["plan"], "postgres")
     return state
 
-def node_lint(state: QAState) -> QAState:
+def node_lint_sql(state: QAState) -> QAState:
     state["lint"] = lint_sql(state["sql"])
     return state
 
-def route_after_lint(state: QAState) -> str:
+def route_after_lint_sql(state: QAState) -> str:
     return "policy" if state["lint"].get("ok") else "generate"
 
 def node_policy(state: QAState) -> QAState:
@@ -59,30 +59,30 @@ def node_policy(state: QAState) -> QAState:
 def route_after_policy(state: QAState) -> str:
     return "explain" if state["policy_ok"] else "generate"
 
-def node_explain(state: QAState) -> QAState:
+def node_explain_sql(state: QAState) -> QAState:
     state["explain"] = explain(state["sql"])
     return state
 
-def node_gate(state: QAState) -> QAState:
+def node_cost_gate(state: QAState) -> QAState:
     state["gate"] = cost_gate(state["explain"])
     return state
 
-def route_after_gate(state: QAState) -> str:
+def route_after_cost_gate(state: QAState) -> str:
     return "preview" if state["gate"].get("pass") else "generate"
 
-def node_preview(state: QAState) -> QAState:
+def node_dry_run_preview(state: QAState) -> QAState:
     state["preview"] = dry_run_sample(state["sql"])
     # If preview failed due to e.g., missing column, loop back to regenerate
     return state
 
-def route_after_preview(state: QAState) -> str:
+def route_after_dry_run_preview(state: QAState) -> str:
     return "execute" if state["preview"].get("ok") else "generate"
 
 def node_execute(state: QAState) -> QAState:
     state["result"] = execute(state["sql"])
     return state
 
-def node_answer(state: QAState) -> QAState:
+def node_summarize_answer(state: QAState) -> QAState:
     state["answer"] = summarize_result(state["question"], state["result"], state["retrieved"])
     return state
 
@@ -90,28 +90,31 @@ def node_answer(state: QAState) -> QAState:
 
 g = StateGraph(QAState)
 g.add_node("retrieve", node_retrieve)
-g.add_node("plan", node_plan)
+g.add_node("plan_sql", node_plan)
 # g.add_node("join_hint", node_join_hint)
 g.add_node("generate", node_generate)
-g.add_node("lint", node_lint)
+g.add_node("lint_sql", node_lint_sql)
 g.add_node("policy", node_policy)
-g.add_node("explain", node_explain)
-g.add_node("gate", node_gate)
-g.add_node("preview", node_preview)
+g.add_node("explain_sql", node_explain_sql)
+g.add_node("cost_gate", node_cost_gate)
+g.add_node("dry_run_preview", node_dry_run_preview)
 g.add_node("execute", node_execute)
-g.add_node("answer", node_answer)
+g.add_node("summarize_answer", node_summarize_answer)
 
 g.add_edge(START, "retrieve")
-g.add_edge("retrieve", "plan")
+g.add_edge("retrieve", "plan_sql")
 # g.add_edge("plan", "join_hint")
-g.add_edge("plan", "generate")
-g.add_edge("generate", "lint")
-g.add_conditional_edges("lint", route_after_lint, {"policy": "policy", "generate": "generate"})
-g.add_conditional_edges("policy", route_after_policy, {"explain": "explain", "generate": "generate"})
-g.add_edge("explain", "gate")
-g.add_conditional_edges("gate", route_after_gate, {"preview": "preview", "generate": "generate"})
-g.add_conditional_edges("preview", route_after_preview, {"execute": "execute", "generate": "generate"})
-g.add_edge("execute", "answer")
-g.add_edge("answer", END)
-
+g.add_edge("plan_sql", "generate")
+g.add_edge("generate", "lint_sql")
+g.add_conditional_edges("lint_sql", route_after_lint_sql, {"policy": "policy", "generate": "generate"})
+g.add_conditional_edges("policy", route_after_policy, {"explain": "explain_sql", "generate": "generate"})
+g.add_edge("explain_sql", "cost_gate")
+g.add_conditional_edges("cost_gate", route_after_cost_gate, {"preview": "dry_run_preview", "generate": "generate"})
+g.add_conditional_edges("dry_run_preview", route_after_dry_run_preview, {"execute": "execute", "generate": "generate"})
+g.add_edge("execute", "summarize_answer")
+g.add_edge("summarize_answer", END)
+# g.add_edge("execute", END)
 APP = g.compile()
+
+if __name__ == "__main__":
+    print(APP.get_graph().draw_ascii())

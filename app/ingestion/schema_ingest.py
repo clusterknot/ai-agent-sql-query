@@ -107,7 +107,7 @@ GRAIN: {m.get('grain')}
 """.strip())
     return cards
 
-def ingest_schema_cards(schemas: list[str], per_table_samples:int=0) -> int:
+def ingest_schema_cards(schemas: list[str] = 'public', per_table_samples:int=0) -> int:
     # samples intentionally ignored here (schema-only). You can extend to add tiny sample rows
     targets=[]
     for s in schemas:
@@ -127,5 +127,5 @@ def ingest_schema_cards(schemas: list[str], per_table_samples:int=0) -> int:
     return add_texts(cards, sources)
 
 if __name__ == "__main__":
-    ingest_schema_cards(["public"])
+    print(ingest_schema_cards(["public"]))
     

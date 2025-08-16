@@ -7,7 +7,7 @@ load_dotenv()
 # LLM
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 GENERATION_MODEL = os.getenv("GENERATION_MODEL", "gemini-1.5-flash")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-004")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "gemini-embedding-001")
 
 # API timeout and retry settings
 API_TIMEOUT_SECONDS = int(os.getenv("API_TIMEOUT_SECONDS", "30"))

@@ -15,10 +15,16 @@ FORBIDDEN = {"INSERT","UPDATE","DELETE","MERGE","CREATE","ALTER","DROP","TRUNCAT
 SCHEMA_QUAL = re.compile(r"\b([a-zA-Z_][\w]*)\.([a-zA-Z_][\w]*)\b")
 
 # --------- PLANNING & GENERATION ---------
+def load_metadata_json():
+    with open(os.path.join(ROOT, 'index', 'meta.json'), 'r') as f:
+        data = json.load(f)
+    return data
+
 
 def plan_sql(nl_question: str, retrieved_context: List[str]) -> Dict[str, Any]:
     """LLM makes a JSON plan of tables/joins/filters/etc based on schema+metric cards."""
-    ctx = "\n---\n".join(retrieved_context[:8])
+    ctx = load_metadata_json() #"\n---\n".join(retrieved_context[:5])
+    # ctx = "\n---\n".join(retrieved_context)
     prompt = f"""
 You are a data analyst. From the Context, plan a SQL query in JSON. Only return JSON.
 JSON fields: tables, joins (list of objects {{left,right,type}}), select, filters, group_by, order_by, metric_refs.
@@ -117,6 +123,7 @@ def dry_run_sample(sql: str, limit: int = 100) -> Dict[str, Any]:
 
 def execute(sql: str) -> Dict[str, Any]:
     return run_sql(sql, limit_timeout_ms=15000)
+    # return generate(sql)
 
 # --------- SUMMARIZATION ---------
 
@@ -137,3 +144,7 @@ Context:
 {ctx}
 """
     return generate(prompt)
+
+
+if __name__ == '__main__':
+    print(load_metadata_json())
